@@ -1,14 +1,15 @@
-import { useMemo, useRef, useState } from 'react';
+import { ReactNode, useMemo, useRef, useState } from 'react';
 import { Tile } from './Tile';
 import { checkScan, applyFixes } from './scan/checks';
 import { CameraGuide } from './CameraGuide';
+import { Guide, Explain, Learn, Tutorial, Tip, useBeginner, tutorialSeen } from './Beginner';
 import { useGames, HandState, emptyHand } from './store';
 import { scoreHand, findWaits, Meld, Score } from './engine/scoring';
 import { PRESETS, Rules, payouts } from './engine/rules';
 import { WINDS, WIND_ZH, tileName } from './engine/tiles';
 import { scanImage, learn, ScanResult, learnedCount, forgetLearned, calibrateTile, calibrated, forgetCalibration } from './scan/scan';
 
-type Tab = 'hand' | 'scan' | 'rules';
+type Tab = 'hand' | 'scan' | 'learn' | 'rules';
 type Mode = 'hand' | 'chow' | 'pung' | 'kong' | 'ckong';
 const SUITS = [
   { label: '萬 Characters', tiles: [0, 1, 2, 3, 4, 5, 6, 7, 8] },
@@ -26,6 +27,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('hand');
   const [mode, setMode] = useState<Mode>('hand');
   const [pickWin, setPickWin] = useState(false);
+  const [beginner, setBeginner] = useBeginner();
+  const [tour, setTour] = useState(() => !tutorialSeen());
 
   const used = useMemo(() => {
     const c = new Array(34).fill(0);
@@ -65,12 +68,14 @@ export default function App() {
     <div className="app">
       <header className="top">
         <div className="brand"><span className="logo">發</span><div><h1>HK Mahjong</h1><p>港式麻雀 · {game.name}</p></div></div>
-        <button className="chip" onClick={() => setTab('rules')}>{rules.minFaan}–{rules.limit} 番</button>
+        <div className="row gap"><button className={`chip ${beginner ? 'on' : ''}`} aria-pressed={beginner} onClick={() => setBeginner(!beginner)}>{beginner ? '🎓 Beginner' : 'Beginner'}</button>
+        <button className="chip" onClick={() => setTab('rules')}>{rules.minFaan}–{rules.limit} 番</button></div>
       </header>
 
       <main>
         {tab === 'hand' && (
           <>
+            {beginner && <Guide hand={hand} setHand={setHand} size={size} rules={rules} />}
             <section className="card handcard">
               <div className="row between">
                 <h2>Your hand <span className="muted">{size}/14</span></h2>
@@ -106,7 +111,7 @@ export default function App() {
               )}
             </section>
 
-            <ResultCard result={result} waits={waits} size={size} rules={rules} selfDrawn={hand.selfDrawn} />
+            <ResultCard result={result} waits={waits} size={size} rules={rules} selfDrawn={hand.selfDrawn} extra={beginner && result && hand.winTile !== null ? <Explain score={result} ctx={{ ...ctxBase, winTile: hand.winTile }} rules={rules} /> : null} />
 
             <section className="card">
               <div className="segmented">
@@ -133,11 +138,13 @@ export default function App() {
         {tab === 'scan' && <Scan onUse={(tiles) => { const main = tiles.filter((t) => t < 34);
           setHand((h) => ({ ...h, concealed: main, melds: [], winTile: main[main.length - 1] ?? null,
             flowers: tiles.filter((t) => t >= 34 && t < 38).map((t) => t - 33), seasons: tiles.filter((t) => t >= 38).map((t) => t - 37) })); setTab('hand'); }} />}
+        {tab === 'learn' && <Learn />}
         {tab === 'rules' && <RulesScreen store={store} />}
       </main>
+      {tour && <Tutorial onDone={() => setTour(false)} />}
 
       <nav className="tabs">
-        {([['hand', '🀄', 'Hand'], ['scan', '📷', 'Scan'], ['rules', '⚙︎', 'Rules']] as [Tab, string, string][]).map(([k, i, l]) => (
+        {([['hand', '🀄', 'Hand'], ['scan', '📷', 'Scan'], ['learn', '📖', 'Learn'], ['rules', '⚙︎', 'Rules']] as [Tab, string, string][]).map(([k, i, l]) => (
           <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}><span>{i}</span>{l}</button>
         ))}
       </nav>
@@ -145,7 +152,7 @@ export default function App() {
   );
 }
 
-function ResultCard({ result, waits, size, rules, selfDrawn }: { result: Score | null; waits: ReturnType<typeof findWaits>; size: number; rules: Rules; selfDrawn: boolean }) {
+function ResultCard({ result, waits, size, rules, selfDrawn, extra }: { result: Score | null; waits: ReturnType<typeof findWaits>; size: number; rules: Rules; selfDrawn: boolean; extra?: ReactNode }) {
   if (size === 13) {
     return (
       <section className="card result">
@@ -181,6 +188,7 @@ function ResultCard({ result, waits, size, rules, selfDrawn }: { result: Score |
         {result.items.map((i, k) => <li key={k}><span>{i.name} <em>{i.zh}</em></span><b>{i.limit ? 'Limit' : `${i.faan}`}</b></li>)}
       </ul>
       {result.meetsMinimum && <div className="pay">{pay.map((p) => <span key={p.from}>{p.from}: <b>{p.points}</b> pts</span>)}</div>}
+      {extra}
     </section>
   );
 }
@@ -331,10 +339,10 @@ function RulesScreen({ store }: { store: Store }) {
   const r = game.rules;
   const set = (patch: Partial<Rules>) => store.setRules({ ...r, ...patch });
   const num = (k: keyof Rules, label: string, min = 0, max = 20) => (
-    <div className="field" key={k}><label>{label}</label><div className="stepper"><button onClick={() => set({ [k]: Math.max(min, (r[k] as number) - 1) })}>−</button><b>{r[k] as number}</b><button onClick={() => set({ [k]: Math.min(max, (r[k] as number) + 1) })}>+</button></div></div>
+    <div className="field" key={k}><label>{label} <Tip k={k} /></label><div className="stepper"><button onClick={() => set({ [k]: Math.max(min, (r[k] as number) - 1) })}>−</button><b>{r[k] as number}</b><button onClick={() => set({ [k]: Math.min(max, (r[k] as number) + 1) })}>+</button></div></div>
   );
   const bool = (k: keyof Rules, label: string) => (
-    <label className="switch" key={k}><span>{label}</span><input type="checkbox" checked={r[k] as boolean} onChange={(e) => set({ [k]: e.target.checked })} /><i /></label>
+    <label className="switch" key={k}><span>{label} <Tip k={k} /></span><input type="checkbox" checked={r[k] as boolean} onChange={(e) => set({ [k]: e.target.checked })} /><i /></label>
   );
   return (
     <>
@@ -392,7 +400,7 @@ function RulesScreen({ store }: { store: Store }) {
       </section>
       <section className="card">
         <h2>Payment 計分</h2>
-        <div className="field"><label>Doubling table</label><div className="segmented sm"><button className={r.payment === 'half-spicy' ? 'on' : ''} onClick={() => set({ payment: 'half-spicy' })}>Half-spicy 半辣</button><button className={r.payment === 'full-spicy' ? 'on' : ''} onClick={() => set({ payment: 'full-spicy' })}>Full-spicy 全辣</button></div></div>
+        <div className="field"><label>Doubling table <Tip k="payment" /></label><div className="segmented sm"><button className={r.payment === 'half-spicy' ? 'on' : ''} onClick={() => set({ payment: 'half-spicy' })}>Half-spicy 半辣</button><button className={r.payment === 'full-spicy' ? 'on' : ''} onClick={() => set({ payment: 'full-spicy' })}>Full-spicy 全辣</button></div></div>
         {bool('discarderPaysAll', 'Discarder pays for all 全銃')}
         {num('basePoints', 'Base points', 1, 100)}
       </section>
