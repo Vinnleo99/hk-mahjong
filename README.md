@@ -96,3 +96,10 @@ The build uses relative paths, so `dist/` works from any sub-path. Push it with 
 
 ## Licence
 MIT. See [LICENSE](LICENSE).
+
+## Tiles (v2)
+
+- **Hand-drawn SVG tiles** in the classic Hong Kong melamine style: ivory faces, a green bamboo-grain back, red and green circles, segmented bamboo, a bird on 1 Bamboo, and flowers and seasons with numbered corners. See [`docs/tileset.png`](docs/tileset.png).
+- **Same tiles on every phone.** The glyphs are SVG paths from **LXGW WenKai TC** (SIL Open Font License 1.1); see `src/glyphs.ts`.
+- **Every drawing fits the face.** Each drawing is centred and fills 82 % of the ivory face, with at least an 8 % margin. `tests/tileMargins.test.ts` renders all 42 tiles at every size the app uses and fails on a drawing that is too big, too small or off-centre. After you edit a drawing, run `GEN_BOUNDS=1 npx vite-node scripts/tile-bounds.mjs`.
+- **The scanner was retrained** on the new drawings; see `training/README.md`.

@@ -20,7 +20,29 @@ json.dump({'train':train,'test':test},open('split.json','w'))
 S=48
 load=lambda p: Image.open(p).convert('RGB')
 real=[(load('images/'+n),c) for n,c in train]
-syn=[(load(f'synth/{i}.png'),i) for i in range(42)]
+syn=[(Image.open(f'synth/{i}.png').convert('RGBA'),i) for i in range(42)]
+from PIL import ImageDraw, ImageFilter, ImageEnhance
+def scene(t):
+    # Synthetic photo of one rendered tile: random table background, tilt, lighting, glare, blur.
+    w,h=t.size; W,H=int(w*random.uniform(1.0,1.25)),int(h*random.uniform(1.0,1.2))
+    base=tuple(random.randint(20,235) for _ in range(3))
+    bg=Image.new('RGB',(W,H),base)
+    if random.random()<0.5: bg=Image.blend(bg,Image.effect_noise((W,H),random.uniform(10,60)).convert('RGB'),0.25)
+    t=t.rotate(random.uniform(-10,10),resample=Image.BICUBIC,expand=True)
+    bg.paste(t,((W-t.width)//2+random.randint(-4,4),(H-t.height)//2+random.randint(-4,4)),t)
+    bg=T.RandomPerspective(0.25,p=0.8,fill=base)(bg)
+    g=Image.linear_gradient('L').resize((W,H)).rotate(random.uniform(0,360)); k=random.uniform(0.5,1.3)
+    bg=Image.composite(ImageEnhance.Brightness(bg).enhance(k),ImageEnhance.Brightness(bg).enhance(random.uniform(0.6,1.2)),g)
+    if random.random()<0.4:
+        m=Image.new('L',(W,H),0); x,y=random.randint(0,W),random.randint(0,H); r=random.randint(W//8,W//3)
+        ImageDraw.Draw(m).ellipse((x-r,y-r//2,x+r,y+r//2),fill=random.randint(90,200)); m=m.filter(ImageFilter.GaussianBlur(r/3))
+        bg=Image.composite(Image.new('RGB',(W,H),(255,255,250)),bg,m)
+    if random.random()<0.5: bg=bg.filter(ImageFilter.GaussianBlur(random.uniform(0.3,2.0)))
+    return bg
+class SynDS(torch.utils.data.Dataset):
+    def __init__(s,items,tf,rep): s.i=items*rep; s.tf=tf
+    def __len__(s): return len(s.i)
+    def __getitem__(s,k): im,c=s.i[k]; return s.tf(scene(im)),c
 aug=T.Compose([T.RandomResizedCrop((S*4//3,S),scale=(0.75,1),ratio=(0.6,0.9)),T.RandomRotation(12,fill=128),
   T.ColorJitter(0.4,0.4,0.3,0.03),T.RandomGrayscale(0.05),T.GaussianBlur(3,(0.1,1.5)),T.ToTensor()])
 ev=T.Compose([T.Resize((S*4//3,S)),T.ToTensor()])
@@ -28,7 +50,7 @@ class DS(torch.utils.data.Dataset):
     def __init__(s,items,tf,rep=1): s.i=items*rep; s.tf=tf
     def __len__(s): return len(s.i)
     def __getitem__(s,k): im,c=s.i[k]; return s.tf(im),c
-tr=torch.utils.data.ConcatDataset([DS(real,aug,8),DS(syn,aug,40)])
+tr=torch.utils.data.ConcatDataset([DS(real,aug,8),SynDS(syn,aug,40)])
 te=DS([(load('images/'+n),c) for n,c in test],ev)
 def blk(i,o): return nn.Sequential(nn.Conv2d(i,o,3,padding=1,bias=False),nn.BatchNorm2d(o),nn.ReLU(),nn.Conv2d(o,o,3,padding=1,bias=False),nn.BatchNorm2d(o),nn.ReLU(),nn.MaxPool2d(2))
 m=nn.Sequential(blk(3,24),blk(24,48),blk(48,96),blk(96,128),nn.AdaptiveAvgPool2d(1),nn.Flatten(),nn.Dropout(0.3),nn.Linear(128,42))
