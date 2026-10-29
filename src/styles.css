@@ -84,3 +84,4 @@ h2{font-size:16px;margin:0 0 10px}.muted{color:var(--muted);font-weight:400}.sma
 .cam-warn span{background:#c0392bdd;color:#fff;padding:5px 12px;border-radius:20px;font-size:13px}.cam-warn .ok{background:#2e8b57dd}
 .cam-bar{position:absolute;bottom:calc(30px + env(safe-area-inset-bottom));left:0;right:0;display:flex;justify-content:space-around;align-items:center}
 .shutter{width:72px;height:72px;border-radius:50%;background:#fff;border:5px solid #ffffff66;background-clip:padding-box}
+.issue{display:flex;flex-direction:column;gap:6px;align-items:flex-start;background:#e8a36a22;border:1px solid #e8a36a66;border-radius:10px;padding:8px 10px;margin:0 0 8px;font-size:13px}

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { Tile } from './Tile';
+import { checkScan, applyFixes } from './scan/checks';
 import { CameraGuide } from './CameraGuide';
 import { useGames, HandState, emptyHand } from './store';
 import { scoreHand, findWaits, Meld, Score } from './engine/scoring';
@@ -249,6 +250,13 @@ function Scan({ onUse }: { onUse: (tiles: number[]) => void }) {
         <section className="card">
           <h2>Review 檢查</h2>
           <p className="muted small">Tap any tile that is wrong and pick the right one. Orange = low confidence.</p>
+          {checkScan(res).map((iss, k) => (
+            <div key={k} className="issue">
+              <span>⚠︎ {iss.message}</span>
+              {iss.fixes.length > 0 && <button className="ghost" onClick={() => setRes(applyFixes(res, iss.fixes))}>
+                Fix: {iss.fixes.map((f) => `#${f.index + 1} → ${tileName(f.to)}`).join(', ')}</button>}
+            </div>
+          ))}
           <div className="review">
             {res.map((r, i) => (
               <button key={i} className={`rv ${r.confidence < 0.5 ? 'low' : ''} ${r.tile !== r.orig ? 'fixed' : ''} ${fix === i ? 'sel' : ''}`} onClick={() => setFix(i)}>
