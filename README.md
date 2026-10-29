@@ -3,7 +3,7 @@
 A free, open-source **Hong Kong style mahjong helper** for Android and iPhone. It's a Progressive Web App: open it in the phone browser, tap **Add to Home Screen**, and it works like a native app, offline too.
 
 <p>
-<img src="docs/screenshot-waits.png" width="240"> <img src="docs/screenshot-hand.png" width="240"> <img src="docs/screenshot-scan.png" width="240">
+<img src="docs/screenshot-waits.png" width="240"> <img src="docs/screenshot-hand.png" width="240"> <img src="docs/screenshot-beginner-explain.png" width="240">
 </p>
 
 ## Features
@@ -48,14 +48,39 @@ Payment tables: **half-spicy** pays 1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128… p
 
 Hong Kong scoring varies a lot from table to table. If your table plays differently, change the rules in **Rules**, or open an issue.
 
-## Scanning: what it can and can't do
-Be realistic about scanning. This is a first version.
+## Beginner mode
 
-- **How it works:** everything runs on your phone and no image is uploaded. The app looks for the bright tile faces in the photo and splits that area into the number of tiles you set. It then compares each tile against built-in drawings of every tile, using shape matching plus a colour check.
-- **Works well:** one straight row of tiles, face up and upright, on a dark plain background, evenly lit, filling the frame. With clean images (tested with rendered tiles) it reads all 14 correctly.
-- **Weak spots:** real tile sets look different from the built-in drawings, so expect mistakes with real photos. Dots, bamboo and characters of the same suit get confused most, and so does the 1 Bamboo bird. Tilted, overlapping or stacked tiles, multiple rows, glare, and busy backgrounds all cause problems. Flowers and declared melds are not scanned.
-- **Gets better as you use it:** you check every tile before the hand is used. Tiles you correct, and tiles the app wasn't sure about, are saved on your phone as examples, so later scans of **your own** tile set get more accurate. You can reset these examples at any time.
-- **Planned:** a trained on-device model (e.g. TensorFlow.js or ONNX) using a labelled dataset of real tile photos, and automatic detection of each tile.
+On by default (toggle 🎓 Beginner in the header). It adds:
+
+- A short first-run tutorial (shown once).
+- A guided four-step card on the Hand tab: tiles → how you won → flowers → winds.
+- Under each result: a plain-language explanation of every faan item and why it applies to *this* hand, the payout worked out step by step, and for hands below the minimum a "What is close" list computed by re-scoring the hand (for example "if you had drawn it yourself it would be 3 faan – enough").
+- A **Learn** tab: every tile with its name, how a hand wins, the main scoring patterns with tile pictures, and a glossary.
+- An ⓘ tooltip on every rule setting.
+
+<img src="docs/screenshot-tutorial.png" width="200"> <img src="docs/screenshot-beginner-close.png" width="200"> <img src="docs/screenshot-beginner-explain.png" width="200"> <img src="docs/screenshot-learn.png" width="200"> <img src="docs/screenshot-rules.png" width="200">
+
+## Scanning
+
+<img src="docs/screenshot-camera-guide.png" width="200"> <img src="docs/screenshot-calibrate.png" width="200"> <img src="docs/screenshot-scan.png" width="200">
+
+- **Camera guide**: live view with a frame and one slot per tile, warnings for dark, blurry or glare-filled images. Or choose a photo.
+- **Segmentation**: finds tiles and rows, straightens mild tilt (about ±20°), counts tiles automatically.
+- **AI model**: a small on-device CNN (426k parameters, 430 KB int8, pure TypeScript runtime, works offline). Blended with template matching; calibrating with your own tiles improves it.
+- **Calibration**: photograph your own set once per tile face.
+- **Checks**: flags too many tiles, duplicates beyond four, wrong counts and non-winning reads, with one-tap fixes from the model's next-best guesses. You always review before using a scan.
+
+Measured on 119 held-out photos (see `training/README.md`):
+
+| Test | AI model | Template only |
+|---|---|---|
+| Tight crop (PyTorch) | 95.8% top-1, 98.3% top-3 | – |
+| Full app pipeline | 85.7% top-1, 89.1% top-3 | 25.2% / 37.0% |
+| 30 composite rows, tiles right | 89.3% (11/30 hands fully right) | 23.3% |
+
+Limits: small test set from the same source as the training data; composite rows are not real table photos; tiles must be upright; the camera guide is untested on real phones. Treat a scan as a first draft.
+
+**Dataset**: [Camerash/mahjong-dataset](https://github.com/Camerash/mahjong-dataset) (MIT, 628 images, 42 classes) plus this app's own tile drawings. The images were scraped from the web, so only the trained weights are shipped; images are not in this repo. `training/` has the scripts to reproduce.
 
 ## Development
 ```bash

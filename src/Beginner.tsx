@@ -113,6 +113,8 @@ export function Explain({ score, ctx, rules }: { score: Score; ctx: WinContext; 
   );
 }
 
+const BONUS = ['Plum 1', 'Orchid 2', 'Chrysanthemum 3', 'Bamboo 4', 'Spring 1', 'Summer 2', 'Autumn 3', 'Winter 4'];
+const caption = (t: number) => (t >= 34 ? BONUS[t - 34] : (tileName(t) ?? '').replace(/ \(.*\)/, ''));
 export function Learn() {
   const groups: [string, number[]][] = [
     ['Characters 萬 – suit, numbers 1 to 9', [0, 1, 2, 3, 4, 5, 6, 7, 8]],
@@ -127,7 +129,7 @@ export function Learn() {
       <section className="card">
         <h2>The tiles</h2>
         <p className="muted small">There are four of each suit and honour tile (136 in all), plus one of each flower and season.</p>
-        {groups.map(([l, ts]) => <div key={l} className="learn-group"><div className="palette-label">{l}</div><div className="row wrap gap">{ts.map((t) => <figure key={t} className="tile-fig"><Tile face={t} size={34} /><figcaption>{tileName(t).replace(/ \(.*\)/, '')}</figcaption></figure>)}</div></div>)}
+        {groups.map(([l, ts]) => <div key={l} className="learn-group"><div className="palette-label">{l}</div><div className="row wrap gap">{ts.map((t) => <figure key={t} className="tile-fig"><Tile face={t} size={34} /><figcaption>{caption(t)}</figcaption></figure>)}</div></div>)}
       </section>
       <section className="card">
         <h2>How a hand wins</h2>
