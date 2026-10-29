@@ -4,7 +4,7 @@ import { useGames, HandState, emptyHand } from './store';
 import { scoreHand, findWaits, Meld, Score } from './engine/scoring';
 import { PRESETS, Rules, payouts } from './engine/rules';
 import { WINDS, WIND_ZH, tileName } from './engine/tiles';
-import { scanImage, learn, ScanResult, learnedCount, forgetLearned } from './scan/scan';
+import { scanImage, learn, ScanResult, learnedCount, forgetLearned, calibrateTile, calibrated, forgetCalibration } from './scan/scan';
 
 type Tab = 'hand' | 'scan' | 'rules';
 type Mode = 'hand' | 'chow' | 'pung' | 'kong' | 'ckong';
@@ -128,7 +128,9 @@ export default function App() {
             <Situation hand={hand} setHand={setHand} rules={rules} />
           </>
         )}
-        {tab === 'scan' && <Scan onUse={(tiles) => { setHand((h) => ({ ...h, concealed: tiles, melds: [], winTile: tiles[tiles.length - 1] ?? null })); setTab('hand'); }} />}
+        {tab === 'scan' && <Scan onUse={(tiles) => { const main = tiles.filter((t) => t < 34);
+          setHand((h) => ({ ...h, concealed: main, melds: [], winTile: main[main.length - 1] ?? null,
+            flowers: tiles.filter((t) => t >= 34 && t < 38).map((t) => t - 33), seasons: tiles.filter((t) => t >= 38).map((t) => t - 37) })); setTab('hand'); }} />}
         {tab === 'rules' && <RulesScreen store={store} />}
       </main>
 
@@ -235,6 +237,7 @@ function Scan({ onUse }: { onUse: (tiles: number[]) => void }) {
         <input ref={input} type="file" accept="image/*" capture="environment" hidden onChange={(e) => e.target.files?.[0] && go(e.target.files[0])} />
         <button className="primary block" onClick={() => input.current?.click()} disabled={busy}>{busy ? 'Reading tiles…' : '📷 Take or choose photo'}</button>
         {photo && <img className="photo" src={photo} alt="scanned" />}
+        <Calibrate />
         <p className="muted small">Learned from your corrections: {learnedN} tile{learnedN === 1 ? '' : 's'} {learnedN > 0 && <button className="link" onClick={() => { forgetLearned(); setLearnedN(0); }}>reset</button>}</p>
       </section>
       {res.length > 0 && (
@@ -252,13 +255,54 @@ function Scan({ onUse }: { onUse: (tiles: number[]) => void }) {
           {fix !== null && (
             <div className="picker">
               <p className="small">Tile {fix + 1} is actually:</p>
-              <div className="palette wrap">{Array.from({ length: 34 }, (_, t) => <Tile key={t} face={t} size={28} label={tileName(t)} selected={res[fix].tile === t} onClick={() => { setRes(res.map((r, j) => (j === fix ? { ...r, tile: t } : r))); setFix(fix + 1 < res.length ? fix + 1 : null); }} />)}</div>
+              <div className="palette wrap">{Array.from({ length: 42 }, (_, t) => <Tile key={t} face={t} size={28} label={tileName(t)} selected={res[fix].tile === t} onClick={() => { setRes(res.map((r, j) => (j === fix ? { ...r, tile: t } : r))); setFix(fix + 1 < res.length ? fix + 1 : null); }} />)}</div>
             </div>
           )}
           <button className="primary block" onClick={use}>Use this hand</button>
         </section>
       )}
     </>
+  );
+}
+
+function Calibrate() {
+  const [open, setOpen] = useState(false);
+  const [map, setMap] = useState(() => calibrated());
+  const [cur, setCur] = useState<number | null>(null);
+  const [flowers, setFlowers] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const n = [...map.keys()].filter((t) => t < 34).length;
+  const total = flowers ? 42 : 34;
+  const next = (from: number) => { for (let t = from + 1; t < total; t++) if (!map.has(t)) return t; return null; };
+  const shoot = (t: number) => { setCur(t); input.current?.click(); };
+  const got = async (f: File) => {
+    if (cur === null) return;
+    await calibrateTile(f, cur);
+    const m = calibrated(); setMap(m);
+    const nx = next(cur); setCur(nx);
+  };
+  return (
+    <div className="calib">
+      <button className="ghost block" onClick={() => setOpen(!open)}>🎯 Calibrate with my tiles <b>{n}/34</b></button>
+      {open && (
+        <>
+          <p className="muted small">Photograph each tile of <b>your own set</b> once, close up on a dark surface. Scans then match against your photos first (stored only on this phone). Tap a tile to (re)shoot it.</p>
+          <input ref={input} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) got(f); }} />
+          <div className="palette wrap">
+            {Array.from({ length: total }, (_, t) => (
+              <button key={t} className={`cal ${map.has(t) ? 'done' : ''} ${cur === t ? 'sel' : ''}`} onClick={() => shoot(t)}>
+                {map.has(t) ? <img src={map.get(t)} alt="" /> : <Tile face={t} size={26} />}
+              </button>
+            ))}
+          </div>
+          <div className="row">
+            <button className="primary" onClick={() => { const t = next(-1); if (t !== null) shoot(t); }} disabled={next(-1) === null}>📷 Next tile</button>
+            <label className="switch inline"><span>Flowers</span><input type="checkbox" checked={flowers} onChange={(e) => setFlowers(e.target.checked)} /><i /></label>
+            {map.size > 0 && <button className="link" onClick={() => { forgetCalibration(); setMap(new Map()); }}>reset</button>}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

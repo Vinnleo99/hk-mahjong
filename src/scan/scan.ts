@@ -6,8 +6,10 @@ import { tileSvg } from '../tileSvg';
 const W = 24, H = 32;
 type Feat = Float32Array; // W*H grey + 3 colour-ratio features
 const LEARN_KEY = 'hkmj.learned.v1';
+const CALIB_KEY = 'hkmj.calib.v1';
 
-export interface ScanResult { crop: string; tile: number; confidence: number; feat: number[] }
+export interface Guess { tile: number; score: number }
+export interface ScanResult { crop: string; tile: number; confidence: number; feat: number[]; alts: Guess[] }
 
 function featuresFrom(ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number): Feat {
   const c = document.createElement('canvas');
@@ -48,7 +50,7 @@ async function builtinTemplates() {
   builtin = [];
   const c = document.createElement('canvas'); c.width = 60; c.height = 80;
   const g = c.getContext('2d', { willReadFrequently: true })!;
-  for (let t = 0; t < 34; t++) {
+  for (let t = 0; t < 42; t++) {
     const img = await loadImage('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(tileSvg(t)));
     g.clearRect(0, 0, 60, 80); g.drawImage(img, 0, 0, 60, 80);
     builtin.push({ tile: t, f: featuresFrom(g, 4, 4, 52, 68) });
@@ -64,6 +66,43 @@ export function learn(samples: { tile: number; feat: number[] }[]) {
   const cur = JSON.parse(localStorage.getItem(LEARN_KEY) || '[]') as { tile: number; f: number[] }[];
   for (const s of samples) cur.push({ tile: s.tile, f: s.feat });
   localStorage.setItem(LEARN_KEY, JSON.stringify(cur.slice(-400)));
+}
+
+// ---- Calibration: one photo per tile of the user's own set (stored on the phone) ----
+type CalibEntry = { tile: number; f: number[]; thumb: string };
+function calibAll(): CalibEntry[] {
+  try { return JSON.parse(localStorage.getItem(CALIB_KEY) || '[]') as CalibEntry[]; } catch { return []; }
+}
+/** Map tile -> thumbnail for tiles that have been calibrated. */
+export function calibrated(): Map<number, string> {
+  return new Map(calibAll().map((c) => [c.tile, c.thumb]));
+}
+export function forgetCalibration(tile?: number) {
+  if (tile === undefined) localStorage.removeItem(CALIB_KEY);
+  else localStorage.setItem(CALIB_KEY, JSON.stringify(calibAll().filter((c) => c.tile !== tile)));
+}
+/** Photograph a single tile; its face is cropped and stored as that tile's template. */
+export async function calibrateTile(file: Blob, tile: number): Promise<string> {
+  const { g, c } = await toCanvas(file, 900);
+  const { top, bot, left, right } = findRow(g, c.width, c.height);
+  const f = featuresFrom(g, left, top, right - left, bot - top);
+  const t = document.createElement('canvas'); t.width = 60; t.height = 80;
+  t.getContext('2d')!.drawImage(c, left, top, right - left, bot - top, 0, 0, 60, 80);
+  const thumb = t.toDataURL('image/jpeg', 0.7);
+  const all = calibAll().filter((x) => x.tile !== tile);
+  all.push({ tile, f: Array.from(f).map((v) => Math.round(v * 1e4) / 1e4), thumb });
+  localStorage.setItem(CALIB_KEY, JSON.stringify(all));
+  return thumb;
+}
+async function toCanvas(file: Blob, max: number) {
+  const url = URL.createObjectURL(file);
+  const img = await loadImage(url);
+  URL.revokeObjectURL(url);
+  const scale = Math.min(1, max / img.width);
+  const c = document.createElement('canvas'); c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  g.drawImage(img, 0, 0, c.width, c.height);
+  return { c, g };
 }
 export const learnedCount = () => learned().length;
 export const forgetLearned = () => localStorage.removeItem(LEARN_KEY);
@@ -89,17 +128,13 @@ function findRow(g: CanvasRenderingContext2D, w: number, h: number) {
  * Recognise `count` tiles laid side by side in a single row (face up, upright).
  */
 export async function scanImage(file: Blob, count: number): Promise<ScanResult[]> {
-  const url = URL.createObjectURL(file);
-  const img = await loadImage(url);
-  URL.revokeObjectURL(url);
-  const scale = Math.min(1, 1600 / img.width);
-  const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
-  const c = document.createElement('canvas'); c.width = w; c.height = h;
-  const g = c.getContext('2d', { willReadFrequently: true })!;
-  g.drawImage(img, 0, 0, w, h);
+  const { c, g } = await toCanvas(file, 1600);
+  const w = c.width, h = c.height;
   const { top, bot, left, right } = findRow(g, w, h);
   const slot = (right - left) / count;
-  const templates = [...(await builtinTemplates()), ...learned().map((x) => ({ ...x, bonus: 0.15 }))] as { tile: number; f: Feat; bonus?: number }[];
+  // Priority: the user's calibration photos > learned corrections > drawn tiles.
+  const calib = calibAll().map((x) => ({ tile: x.tile, f: Float32Array.from(x.f), bonus: 0.25 }));
+  const templates = [...(await builtinTemplates()), ...learned().map((x) => ({ ...x, bonus: 0.15 })), ...calib] as { tile: number; f: Feat; bonus?: number }[];
   const out: ScanResult[] = [];
   const thumb = document.createElement('canvas');
   for (let i = 0; i < count; i++) {
@@ -114,7 +149,7 @@ export async function scanImage(file: Blob, count: number): Promise<ScanResult[]
     const margin = ranked[0][1] - ranked[1][1];
     thumb.width = 60; thumb.height = 80;
     thumb.getContext('2d')!.drawImage(c, sx, top, slot, bot - top, 0, 0, 60, 80);
-    out.push({ crop: thumb.toDataURL('image/jpeg', 0.8), tile: ranked[0][0], confidence: Math.max(0, Math.min(1, ranked[0][1] * 0.8 + margin * 3)), feat: Array.from(f) });
+    out.push({ crop: thumb.toDataURL('image/jpeg', 0.8), tile: ranked[0][0], confidence: Math.max(0, Math.min(1, ranked[0][1] * 0.8 + margin * 3)), feat: Array.from(f), alts: ranked.slice(0, 3).map(([tile, score]) => ({ tile, score })) });
   }
   return out;
 }
