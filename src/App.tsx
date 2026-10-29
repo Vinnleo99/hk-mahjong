@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { Tile } from './Tile';
+import { CameraGuide } from './CameraGuide';
 import { useGames, HandState, emptyHand } from './store';
 import { scoreHand, findWaits, Meld, Score } from './engine/scoring';
 import { PRESETS, Rules, payouts } from './engine/rules';
@@ -218,7 +219,9 @@ function Scan({ onUse }: { onUse: (tiles: number[]) => void }) {
   const [photo, setPhoto] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const [learnedN, setLearnedN] = useState(learnedCount());
-  const go = async (f: File) => {
+  const [cam, setCam] = useState(false);
+  const go = async (f: Blob) => {
+    setCam(false);
     setBusy(true); setPhoto(URL.createObjectURL(f));
     try { setRes((await scanImage(f, count)).map((r) => ({ ...r, orig: r.tile }))); } finally { setBusy(false); }
   };
@@ -235,7 +238,9 @@ function Scan({ onUse }: { onUse: (tiles: number[]) => void }) {
         <p className="muted small">Line your tiles up in <b>one straight row</b>, face up and upright, on a dark table. Fill the frame edge to edge, then take the photo.</p>
         <div className="field"><label>Tiles in photo</label><div className="stepper"><button onClick={() => setCount(Math.max(1, count - 1))}>−</button><b>{count}</b><button onClick={() => setCount(Math.min(18, count + 1))}>+</button></div></div>
         <input ref={input} type="file" accept="image/*" capture="environment" hidden onChange={(e) => e.target.files?.[0] && go(e.target.files[0])} />
-        <button className="primary block" onClick={() => input.current?.click()} disabled={busy}>{busy ? 'Reading tiles…' : '📷 Take or choose photo'}</button>
+        <button className="primary block" onClick={() => setCam(true)} disabled={busy}>{busy ? 'Reading tiles…' : '📷 Open camera guide'}</button>
+        <button className="ghost block" onClick={() => input.current?.click()} disabled={busy}>🖼 Choose a photo instead</button>
+        {cam && <CameraGuide count={count} onCapture={go} onClose={() => setCam(false)} />}
         {photo && <img className="photo" src={photo} alt="scanned" />}
         <Calibrate />
         <p className="muted small">Learned from your corrections: {learnedN} tile{learnedN === 1 ? '' : 's'} {learnedN > 0 && <button className="link" onClick={() => { forgetLearned(); setLearnedN(0); }}>reset</button>}</p>
