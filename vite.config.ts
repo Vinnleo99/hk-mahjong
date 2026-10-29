@@ -9,6 +9,9 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Model weights are precached in the background so scanning works offline;
+      // they are only fetched into memory when a scan first needs them.
+      workbox: { globPatterns: ['**/*.{js,css,html,svg,png,bin}'] },
       includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'HK Mahjong 港式麻雀',

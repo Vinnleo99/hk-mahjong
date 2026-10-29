@@ -213,7 +213,8 @@ function Situation({ hand, setHand, rules }: { hand: HandState; setHand: (f: (h:
 }
 
 function Scan({ onUse }: { onUse: (tiles: number[]) => void }) {
-  const [count, setCount] = useState(14);
+  const [count, setCount] = useState(0); // 0 = auto
+  const [info, setInfo] = useState('');
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<(ScanResult & { orig: number })[]>([]);
   const [fix, setFix] = useState<number | null>(null);
@@ -224,7 +225,11 @@ function Scan({ onUse }: { onUse: (tiles: number[]) => void }) {
   const go = async (f: Blob) => {
     setCam(false);
     setBusy(true); setPhoto(URL.createObjectURL(f));
-    try { setRes((await scanImage(f, count)).map((r) => ({ ...r, orig: r.tile }))); } finally { setBusy(false); }
+    try {
+      const o = await scanImage(f, count);
+      setRes(o.tiles.map((r) => ({ ...r, orig: r.tile })));
+      setInfo(`${o.tiles.length} tiles · ${o.rows} row${o.rows > 1 ? 's' : ''}${Math.abs(o.tilt) >= 0.02 ? ` · straightened ${Math.round((o.tilt * 180) / Math.PI)}°` : ''} · ${o.engine === 'model' ? 'AI model' : 'template matcher'}${o.segmented ? '' : ' · equal-slot fallback'}`);
+    } finally { setBusy(false); }
   };
   const use = () => {
     const corrected = res.filter((r) => r.tile !== r.orig || r.confidence < 0.5);
@@ -236,12 +241,12 @@ function Scan({ onUse }: { onUse: (tiles: number[]) => void }) {
     <>
       <section className="card">
         <h2>Scan tiles 掃描</h2>
-        <p className="muted small">Line your tiles up in <b>one straight row</b>, face up and upright, on a dark table. Fill the frame edge to edge, then take the photo.</p>
-        <div className="field"><label>Tiles in photo</label><div className="stepper"><button onClick={() => setCount(Math.max(1, count - 1))}>−</button><b>{count}</b><button onClick={() => setCount(Math.min(18, count + 1))}>+</button></div></div>
+        <p className="muted small">Lay tiles face up and upright on a dark table, in one or two rows with small gaps. Slight tilt is corrected. Leave count on <b>Auto</b>, or set it if tiles touch.</p>
+        <div className="field"><label>Tiles in photo</label><div className="stepper"><button onClick={() => setCount(Math.max(0, count - 1))}>−</button><b>{count || 'Auto'}</b><button onClick={() => setCount(Math.min(22, count + 1))}>+</button></div></div>
         <input ref={input} type="file" accept="image/*" capture="environment" hidden onChange={(e) => e.target.files?.[0] && go(e.target.files[0])} />
         <button className="primary block" onClick={() => setCam(true)} disabled={busy}>{busy ? 'Reading tiles…' : '📷 Open camera guide'}</button>
         <button className="ghost block" onClick={() => input.current?.click()} disabled={busy}>🖼 Choose a photo instead</button>
-        {cam && <CameraGuide count={count} onCapture={go} onClose={() => setCam(false)} />}
+        {cam && <CameraGuide count={count || 14} onCapture={go} onClose={() => setCam(false)} />}
         {photo && <img className="photo" src={photo} alt="scanned" />}
         <Calibrate />
         <p className="muted small">Learned from your corrections: {learnedN} tile{learnedN === 1 ? '' : 's'} {learnedN > 0 && <button className="link" onClick={() => { forgetLearned(); setLearnedN(0); }}>reset</button>}</p>
@@ -249,6 +254,7 @@ function Scan({ onUse }: { onUse: (tiles: number[]) => void }) {
       {res.length > 0 && (
         <section className="card">
           <h2>Review 檢查</h2>
+          {info && <p className="small gold">{info}</p>}
           <p className="muted small">Tap any tile that is wrong and pick the right one. Orange = low confidence.</p>
           {checkScan(res).map((iss, k) => (
             <div key={k} className="issue">

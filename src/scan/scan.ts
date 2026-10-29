@@ -2,6 +2,8 @@
 // by normalised cross-correlation against (a) built-in rendered templates and
 // (b) templates learned from the user's own corrections (stored locally).
 import { tileSvg } from '../tileSvg';
+import { faceMask, segment, estimateTilt } from './segment';
+import { loadNet, classify, toInput, IN_W, IN_H, CLASSES } from './model';
 
 const W = 24, H = 32;
 type Feat = Float32Array; // W*H grey + 3 colour-ratio features
@@ -124,32 +126,91 @@ function findRow(g: CanvasRenderingContext2D, w: number, h: number) {
   return { top, bot, left, right };
 }
 
+function rotated(c: HTMLCanvasElement, angle: number) {
+  const r = document.createElement('canvas'); r.width = c.width; r.height = c.height;
+  const g = r.getContext('2d', { willReadFrequently: true })!;
+  g.fillStyle = '#000'; g.fillRect(0, 0, r.width, r.height);
+  g.translate(r.width / 2, r.height / 2); g.rotate(-angle); g.drawImage(c, -c.width / 2, -c.height / 2);
+  return { c: r, g };
+}
+
+/** Find tile boxes (any number of rows), correcting tilt first. Coordinates are in `c`. */
+function locate(c0: HTMLCanvasElement, g0: CanvasRenderingContext2D) {
+  const sw = Math.min(1, 640 / c0.width);
+  const small = (cv: HTMLCanvasElement) => {
+    const s = document.createElement('canvas'); s.width = Math.round(cv.width * sw); s.height = Math.round(cv.height * sw);
+    const sg = s.getContext('2d', { willReadFrequently: true })!; sg.drawImage(cv, 0, 0, s.width, s.height);
+    return { mask: faceMask(sg.getImageData(0, 0, s.width, s.height).data, s.width, s.height), w: s.width, h: s.height };
+  };
+  let { mask, w, h } = small(c0);
+  const tilt = estimateTilt(mask, w, h);
+  let c = c0, g = g0;
+  if (Math.abs(tilt) >= 0.02) { ({ c, g } = rotated(c0, tilt)); ({ mask, w, h } = small(c)); }
+  const boxes = segment(mask, w, h).map((b) => ({ ...b, x: b.x / sw, y: b.y / sw, w: b.w / sw, h: b.h / sw }));
+  return { c, g, boxes, tilt };
+}
+
+const softmax = (xs: number[], t: number) => { const m = Math.max(...xs); const e = xs.map((x) => Math.exp((x - m) * t)); const z = e.reduce((a, b) => a + b); return e.map((v) => v / z); };
+
+export interface ScanOptions { useModel?: boolean; modelUrl?: string }
+export interface ScanOutput { tiles: ScanResult[]; rows: number; tilt: number; engine: 'model' | 'templates'; segmented: boolean }
+
 /**
- * Recognise `count` tiles laid side by side in a single row (face up, upright).
+ * Recognise tiles. `count` = 0 means auto-detect (multiple rows supported);
+ * a fixed count also enables the equal-slot fallback for a single tight row.
  */
-export async function scanImage(file: Blob, count: number): Promise<ScanResult[]> {
-  const { c, g } = await toCanvas(file, 1600);
-  const w = c.width, h = c.height;
-  const { top, bot, left, right } = findRow(g, w, h);
-  const slot = (right - left) / count;
-  // Priority: the user's calibration photos > learned corrections > drawn tiles.
+export async function scanImage(file: Blob, count: number, opts: ScanOptions = {}): Promise<ScanOutput> {
+  const src = await toCanvas(file, 1600);
+  const { c, g, boxes: found, tilt } = locate(src.c, src.g);
+  let boxes = found;
+  let segmented = true;
+  if (!boxes.length || (count > 0 && boxes.length !== count)) {
+    // Fallback: one row, equal slots (works when tiles touch and lighting is flat).
+    const { top, bot, left, right } = findRow(g, c.width, c.height);
+    const n = count || Math.max(1, Math.round((right - left) / ((bot - top) * 0.75)));
+    const slot = (right - left) / n;
+    boxes = Array.from({ length: n }, (_, i) => ({ x: left + i * slot, y: top, w: slot, h: bot - top, row: 0 }));
+    segmented = false;
+  }
+  const net = opts.useModel === false ? null : await loadNet(opts.modelUrl);
   const calib = calibAll().map((x) => ({ tile: x.tile, f: Float32Array.from(x.f), bonus: 0.25 }));
+  // Priority among templates: the user's calibration photos > learned corrections > drawn tiles.
   const templates = [...(await builtinTemplates()), ...learned().map((x) => ({ ...x, bonus: 0.15 })), ...calib] as { tile: number; f: Feat; bonus?: number }[];
+  const calibrated = new Set(calib.map((x) => x.tile));
+  const inp = document.createElement('canvas'); inp.width = IN_W; inp.height = IN_H;
+  const ig = inp.getContext('2d', { willReadFrequently: true })!;
+  ig.imageSmoothingQuality = 'high';
+  const thumb = document.createElement('canvas'); thumb.width = 60; thumb.height = 80;
   const out: ScanResult[] = [];
-  const thumb = document.createElement('canvas');
-  for (let i = 0; i < count; i++) {
-    const sx = left + i * slot, pad = slot * 0.06, ph = (bot - top) * 0.05;
-    const f = featuresFrom(g, sx + pad, top + ph, slot - 2 * pad, bot - top - 2 * ph);
+  for (const b of boxes) {
+    const pad = b.w * 0.06, ph = b.h * 0.05;
+    const f = featuresFrom(g, b.x + pad, b.y + ph, b.w - 2 * pad, b.h - 2 * ph);
     const best = new Map<number, number>();
     for (const t of templates) {
       const s = similarity(f, t.f) + (t.bonus ?? 0);
       if (s > (best.get(t.tile) ?? -9)) best.set(t.tile, s);
     }
-    const ranked = [...best.entries()].sort((a, b) => b[1] - a[1]);
-    const margin = ranked[0][1] - ranked[1][1];
-    thumb.width = 60; thumb.height = 80;
-    thumb.getContext('2d')!.drawImage(c, sx, top, slot, bot - top, 0, 0, 60, 80);
-    out.push({ crop: thumb.toDataURL('image/jpeg', 0.8), tile: ranked[0][0], confidence: Math.max(0, Math.min(1, ranked[0][1] * 0.8 + margin * 3)), feat: Array.from(f), alts: ranked.slice(0, 3).map(([tile, score]) => ({ tile, score })) });
+    const tiles = [...best.keys()];
+    const pt = softmax(tiles.map((t) => best.get(t)!), 12);
+    const prob = new Map(tiles.map((t, k) => [t, pt[k]]));
+    if (net) {
+      const m = b.w * 0.04;
+      ig.drawImage(c, b.x - m, b.y - m, b.w + 2 * m, b.h + 2 * m, 0, 0, IN_W, IN_H);
+      const pm = classify(net, toInput(ig.getImageData(0, 0, IN_W, IN_H).data));
+      // The model decides; the user's calibration photos get an equal say for tiles they cover.
+      // (Blending in the drawn-tile templates measured slightly worse, so they get no weight here.)
+      for (let t = 0; t < CLASSES; t++) {
+        const wt = calibrated.has(t) ? 0.5 : 0;
+        prob.set(t, (1 - wt) * pm[t] + wt * (prob.get(t) ?? 0));
+      }
+    }
+    const ranked = [...prob.entries()].sort((a, b2) => b2[1] - a[1]);
+    thumb.getContext('2d')!.drawImage(c, b.x, b.y, b.w, b.h, 0, 0, 60, 80);
+    out.push({
+      crop: thumb.toDataURL('image/jpeg', 0.8), tile: ranked[0][0],
+      confidence: Math.max(0, Math.min(1, ranked[0][1] * 1.2 - ranked[1][1] * 0.5)),
+      feat: Array.from(f), alts: ranked.slice(0, 3).map(([tile, score]) => ({ tile, score })),
+    });
   }
-  return out;
+  return { tiles: out, rows: new Set(boxes.map((b) => b.row)).size, tilt, engine: net ? 'model' : 'templates', segmented };
 }
